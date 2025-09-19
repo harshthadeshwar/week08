@@ -81,6 +81,7 @@ jobs:
             O_IP=$(kubectl get svc "$ORDER_SVC" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
             echo "Attempt $i: Product=$P_IP Order=$O_IP"
             if [[ -n "$P_IP" && -n "$O_IP" ]]; then
+              echo "All backend LoadBalancer IPs assigned!"
               echo "PRODUCT_IP=$P_IP" >> $GITHUB_ENV
               echo "ORDER_IP=$O_IP" >> $GITHUB_ENV
               break
@@ -88,7 +89,7 @@ jobs:
             sleep 5
           done
 
-          if [[ -z "${PRODUCT_IP}" || -z "${ORDER_IP}" ]]; then
+            if [[ -z "$P_IP" || -z "$O_IP" ]]; then
             echo "Error: One or more LoadBalancer IPs not assigned."
             exit 1
           fi
