@@ -71,28 +71,30 @@ jobs:
           kubectl apply -f order-service.yaml
 
       - name: Wait for Backend LoadBalancer IPs
+        shell: bash
         run: |
           PRODUCT_SVC="product-service"
           ORDER_SVC="order-service"
-
+        
           echo "Waiting up to 5 minutes for LoadBalancer IPs..."
-          for i in $(1..60); do
-            P_IP=$(kubectl get svc "$PRODUCT_SVC" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-            O_IP=$(kubectl get svc "$ORDER_SVC" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-            echo "Attempt $i: Product=$P_IP Order=$O_IP"
+          for i in $(seq 1 60); do
+              P_IP="$(kubectl get svc "$PRODUCT_SVC" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')"
+              O_IP="$(kubectl get svc "$ORDER_SVC" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')"
+              echo "Attempt $i: Product=${P_IP:-<pending>} Order=${O_IP:-<pending>}"
             if [[ -n "$P_IP" && -n "$O_IP" ]]; then
-              echo "All backend LoadBalancer IPs assigned!"
-              echo "PRODUCT_IP=$P_IP" >> $GITHUB_ENV
-              echo "ORDER_IP=$O_IP" >> $GITHUB_ENV
-              break
+                echo "All backend LoadBalancer IPs assigned!"
+                echo "PRODUCT_IP=$P_IP" >> "$GITHUB_ENV"
+                echo "ORDER_IP=$O_IP"   >> "$GITHUB_ENV"
+                exit 0
             fi
-            sleep 5
-          done
-
-            if [[ -z "$P_IP" || -z "$O_IP" ]]; then
-            echo "Error: One or more LoadBalancer IPs not assigned."
-            exit 1
-          fi
+              sleep 5
+            done
+        
+          echo "Error: One or more LoadBalancer IPs not assigned after timeout."
+          echo "Services status:"
+          kubectl get svc "$PRODUCT_SVC" "$ORDER_SVC" || true
+          exit 1
+        
 
       - id: get_product_ip
         run: echo "external_ip=${{ env.PRODUCT_IP }}" >> $GITHUB_OUTPUT
