@@ -1,45 +1,50 @@
-name: Frontend CI - Build & Push Image
+name: Frontend CI
 
 on:
-  workflow_dispatch:
+  pull_request:
+    branches: [ dev, main ]
+    paths: [ "frontend/**", ".github/workflows/frontend_ci.yml" ]
   push:
-    branches: [main]
-    paths:
-      - 'frontend/**'
-      - '.github/workflows/frontend_ci.yml'
+    branches: [ dev ]
+    paths: [ "frontend/**", ".github/workflows/frontend_ci.yml" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 env:
-  # >>> Make sure these two repo secrets exist <<<
-  # ACR_NAME          = sit722wk8acr
-  # ACR_LOGIN_SERVER  = sit722wk8acr.azurecr.io
-  ACR_NAME: ${{ secrets.ACR_NAME }}
-  ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+  ACR_LOGIN_SERVER: ${{ secrets.AZURE_CONTAINER_REGISTRY }}
   IMAGE_TAG: ${{ github.sha }}-${{ github.run_id }}
+
+concurrency:
+  group: frontend-ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build_and_push_frontend:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Azure Login
-        uses: azure/login@v2
+      - uses: actions/setup-node@v4
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build/Test
+        run: |
+          cd frontend
+          npm ci
+          npm test --if-present
+          cd ..
 
       - name: Login to ACR
-        run: az acr login --name "${{ env.ACR_NAME }}"
+        run: az acr login --name ${{ env.ACR_LOGIN_SERVER }}
 
-      - name: Build & Push frontend
+      - name: Build & Push Frontend
         run: |
-          docker build -t ${{ env.ACR_LOGIN_SERVER }}/frontend:${{ env.IMAGE_TAG }} ./frontend
-          docker tag  ${{ env.ACR_LOGIN_SERVER }}/frontend:${{ env.IMAGE_TAG }} \
-                      ${{ env.ACR_LOGIN_SERVER }}/frontend:latest
+          docker build -t ${{ env.ACR_LOGIN_SERVER }}/frontend:${{ env.IMAGE_TAG }} ./frontend/
+          docker tag  ${{ env.ACR_LOGIN_SERVER }}/frontend:${{ env.IMAGE_TAG }} ${{ env.ACR_LOGIN_SERVER }}/frontend:latest
           docker push ${{ env.ACR_LOGIN_SERVER }}/frontend:${{ env.IMAGE_TAG }}
           docker push ${{ env.ACR_LOGIN_SERVER }}/frontend:latest
-
-      - name: Logout
-        if: always()
-        run: az logout

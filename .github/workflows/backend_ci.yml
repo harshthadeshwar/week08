@@ -1,26 +1,25 @@
 name: Backend CI - Test, Build and Push Images to ACR
 
+
 on:
-  workflow_dispatch:
+  pull_request:
+    branches: [ dev, main ]
+    paths: [ "backend/**", ".github/workflows/backend_ci.yml" ]
   push:
-    branches: [main]
-    paths:
-      - 'backend/**'
-      - '.github/workflows/backend_ci.yml'
+    branches: [ dev ]
+    paths: [ "backend/**", ".github/workflows/backend_ci.yml" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 env:
-  # >>> Make sure these two repo secrets exist <<<
-  # ACR_NAME          = sit722wk8acr
-  # ACR_LOGIN_SERVER  = sit722wk8acr.azurecr.io
-  ACR_NAME: ${{ secrets.ACR_NAME }}
-  ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
-
+  ACR_LOGIN_SERVER: ${{ secrets.AZURE_CONTAINER_REGISTRY }}
   IMAGE_TAG: ${{ github.sha }}-${{ github.run_id }}
 
 jobs:
-  test_and_lint_backends:
+  test_matrix:
     runs-on: ubuntu-latest
-
     services:
       product_db:
         image: postgres:15
@@ -33,8 +32,7 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-        ports: ["5432:5432"]
-
+        ports: [ "5432:5432" ]
       order_db:
         image: postgres:15
         env:
@@ -46,87 +44,63 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-        ports: ["5433:5432"]
+        ports: [ "5433:5432" ]
+
+    strategy:
+      matrix:
+        service: [ "product_service", "order_service" ]
+
+    concurrency:
+      group: backend-ci-${{ matrix.service }}-${{ github.ref }}
+      cancel-in-progress: true
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python 3.10
+      - name: Set up Python
         uses: actions/setup-python@v5
+        with: { python-version: "3.10" }
+
+      - name: Cache pip
+        uses: actions/cache@v4
         with:
-          python-version: '3.10'
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles(format('backend/{0}/requirements.txt', matrix.service)) }}
 
-      - name: Install dependencies
+      - name: Install deps & run tests
+        working-directory: backend/${{ matrix.service }}
+        env:
+          POSTGRES_HOST: ${{ matrix.service == 'product_service' && 'localhost' || 'localhost' }}
+          POSTGRES_PORT: ${{ matrix.service == 'product_service' && '5432' || '5433' }}
+          POSTGRES_DB:   ${{ matrix.service == 'product_service' && 'products' || 'orders' }}
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
         run: |
-          pip install --upgrade pip pytest httpx
-          for req in backend/*/requirements.txt; do
-            echo "Installing $req"
-            pip install -r "$req"
-          done
+          pip install --upgrade pip
+          pip install -r requirements.txt pytest httpx
+          pytest -q
 
-      - name: Run product_service tests
-        working-directory: backend/product_service
-        env:
-          POSTGRES_HOST: localhost
-          POSTGRES_PORT: 5432
-          POSTGRES_DB: products
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        run: pytest tests --maxfail=1 --disable-warnings -q
-
-      - name: Run order_service tests
-        working-directory: backend/order_service
-        env:
-          POSTGRES_HOST: localhost
-          POSTGRES_PORT: 5433
-          POSTGRES_DB: orders
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        run: pytest tests --maxfail=1 --disable-warnings -q
-
-  build_and_push_images:
+  build_and_push:
     runs-on: ubuntu-latest
-    needs: test_and_lint_backends
+    needs: test_matrix
+    if: ${{ needs.test_matrix.result == 'success' }}
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - uses: actions/checkout@v4
 
       - name: Login to ACR
-        run: az acr login --name "${{ env.ACR_NAME }}"
+        run: az acr login --name ${{ env.ACR_LOGIN_SERVER }}
 
-      # PRODUCT
-      - name: Build product image
+      - name: Build & Push product_service
         run: |
-          docker build \
-            -t ${{ env.ACR_LOGIN_SERVER }}/product_service:${{ env.IMAGE_TAG }} \
-            -f backend/product_service/Dockerfile backend/product_service
-          docker tag ${{ env.ACR_LOGIN_SERVER }}/product_service:${{ env.IMAGE_TAG }} \
-                    ${{ env.ACR_LOGIN_SERVER }}/product_service:latest
-      - name: Push product image
-        run: |
+          docker build -t ${{ env.ACR_LOGIN_SERVER }}/product_service:${{ env.IMAGE_TAG }} ./backend/product_service/
+          docker tag  ${{ env.ACR_LOGIN_SERVER }}/product_service:${{ env.IMAGE_TAG }} ${{ env.ACR_LOGIN_SERVER }}/product_service:latest
           docker push ${{ env.ACR_LOGIN_SERVER }}/product_service:${{ env.IMAGE_TAG }}
           docker push ${{ env.ACR_LOGIN_SERVER }}/product_service:latest
 
-      # ORDER
-      - name: Build order image
+      - name: Build & Push order_service
         run: |
-          docker build \
-            -t ${{ env.ACR_LOGIN_SERVER }}/order_service:${{ env.IMAGE_TAG }} \
-            -f backend/order_service/Dockerfile backend/order_service
-          docker tag ${{ env.ACR_LOGIN_SERVER }}/order_service:${{ env.IMAGE_TAG }} \
-                    ${{ env.ACR_LOGIN_SERVER }}/order_service:latest
-      - name: Push order image
-        run: |
+          docker build -t ${{ env.ACR_LOGIN_SERVER }}/order_service:${{ env.IMAGE_TAG }} ./backend/order_service/
+          docker tag  ${{ env.ACR_LOGIN_SERVER }}/order_service:${{ env.IMAGE_TAG }} ${{ env.ACR_LOGIN_SERVER }}/order_service:latest
           docker push ${{ env.ACR_LOGIN_SERVER }}/order_service:${{ env.IMAGE_TAG }}
           docker push ${{ env.ACR_LOGIN_SERVER }}/order_service:latest
-
-      - name: Logout
-        if: always()
-        run: az logout
