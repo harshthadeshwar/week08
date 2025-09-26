@@ -94,20 +94,36 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          
+
+      - name: Resolve ACR login server
+        env:
+           REGISTRY_NAME: ${{ secrets.AZURE_CONTAINER_REGISTRY }}
+        run: |
+          set -e
+          LOGIN_SERVER=$(az acr show --name "$REGISTRY_NAME" --query loginServer -o tsv)
+          echo "REGISTRY_NAME=$REGISTRY_NAME" >> $GITHUB_ENV
+          echo "REGISTRY_LOGIN=$LOGIN_SERVER" >> $GITHUB_ENV
+          echo "::notice::Resolved ACR login server: $LOGIN_SERVER"
+      
+      - name: Debug ACR env
+        run: |
+          echo "REGISTRY_NAME=$REGISTRY_NAME"
+          echo "REGISTRY_LOGIN=$REGISTRY_LOGIN"
+        
+        
       - name: Login to ACR
-        run: az acr login --name ${{ env.ACR_LOGIN_SERVER }}
+        run: az acr login --name "$REGISTRY_NAME"
 
       - name: Build & Push product_service
         run: |
-          docker build -t ${{ env.ACR_LOGIN_SERVER }}/product_service:${{ env.IMAGE_TAG }} ./backend/product_service/
-          docker tag  ${{ env.ACR_LOGIN_SERVER }}/product_service:${{ env.IMAGE_TAG }} ${{ env.ACR_LOGIN_SERVER }}/product_service:latest
-          docker push ${{ env.ACR_LOGIN_SERVER }}/product_service:${{ env.IMAGE_TAG }}
-          docker push ${{ env.ACR_LOGIN_SERVER }}/product_service:latest
+          docker build -t "$REGISTRY_LOGIN/product_service:${{ env.IMAGE_TAG }}" ./backend/product_service/
+          docker tag  "$REGISTRY_LOGIN/product_service:${{ env.IMAGE_TAG }}" "$REGISTRY_LOGIN/product_service:latest"
+          docker push "$REGISTRY_LOGIN/product_service:${{ env.IMAGE_TAG }}"
+          docker push "$REGISTRY_LOGIN/product_service:latest"
 
       - name: Build & Push order_service
         run: |
-          docker build -t ${{ env.ACR_LOGIN_SERVER }}/order_service:${{ env.IMAGE_TAG }} ./backend/order_service/
-          docker tag  ${{ env.ACR_LOGIN_SERVER }}/order_service:${{ env.IMAGE_TAG }} ${{ env.ACR_LOGIN_SERVER }}/order_service:latest
-          docker push ${{ env.ACR_LOGIN_SERVER }}/order_service:${{ env.IMAGE_TAG }}
-          docker push ${{ env.ACR_LOGIN_SERVER }}/order_service:latest
+          docker build -t "$REGISTRY_LOGIN/order_service:${{ env.IMAGE_TAG }}" ./backend/order_service/
+          docker tag  "$REGISTRY_LOGIN/order_service:${{ env.IMAGE_TAG }}" "$REGISTRY_LOGIN/order_service:latest"
+          docker push "$REGISTRY_LOGIN/order_service:${{ env.IMAGE_TAG }}"
+          docker push "$REGISTRY_LOGIN/order_service:latest"

@@ -30,23 +30,42 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Build/Test
+          - name: Build/Test (skip if no Node app)
+          run: |
+            if [ -f frontend/package.json ]; then
+              cd frontend
+              if [ -f package-lock.json ]; then npm ci; else npm install; fi
+              npm test --if-present
+              cd ..
+            else
+              echo "No package.json in frontend/, skipping npm build/test."
+            fi
+  
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+           client-id: ${{ secrets.AZURE_CLIENT_ID }}
+           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  
+      - name: Resolve ACR login server
+        env:
+          REGISTRY_NAME: ${{ secrets.AZURE_CONTAINER_REGISTRY }}
         run: |
-          cd frontend
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
-          fi
-          npm test --if-present
-          cd ..
-
+          set -e
+          LOGIN_SERVER=$(az acr show --name "$REGISTRY_NAME" --query loginServer -o tsv)
+          echo "REGISTRY_NAME=$REGISTRY_NAME" >> $GITHUB_ENV
+          echo "REGISTRY_LOGIN=$LOGIN_SERVER" >> $GITHUB_ENV
+          echo "::notice::Resolved ACR login server: $LOGIN_SERVER"
+  
       - name: Login to ACR
-        run: az acr login --name ${{ env.ACR_LOGIN_SERVER }}
-
+        run: az acr login --name "$REGISTRY_NAME"
+  
       - name: Build & Push Frontend
-        run: |
-          docker build -t ${{ env.ACR_LOGIN_SERVER }}/frontend:${{ env.IMAGE_TAG }} ./frontend/
-          docker tag  ${{ env.ACR_LOGIN_SERVER }}/frontend:${{ env.IMAGE_TAG }} ${{ env.ACR_LOGIN_SERVER }}/frontend:latest
-          docker push ${{ env.ACR_LOGIN_SERVER }}/frontend:${{ env.IMAGE_TAG }}
-          docker push ${{ env.ACR_LOGIN_SERVER }}/frontend:latest
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          run: |
+            docker build -t "$REGISTRY_LOGIN/frontend:${IMAGE_TAG}" ./frontend/
+            docker tag  "$REGISTRY_LOGIN/frontend:${IMAGE_TAG}" "$REGISTRY_LOGIN/frontend:latest"
+            docker push "$REGISTRY_LOGIN/frontend:${IMAGE_TAG}"
+            docker push "$REGISTRY_LOGIN/frontend:latest"
