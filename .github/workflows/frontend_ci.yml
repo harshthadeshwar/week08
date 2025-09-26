@@ -11,6 +11,8 @@ on:
 
 permissions:
   contents: read
+  id-token: write
+
 
 env:
   ACR_LOGIN_SERVER: ${{ secrets.AZURE_CONTAINER_REGISTRY }}
@@ -23,49 +25,46 @@ concurrency:
 jobs:
   build_and_push_frontend:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
+      # Skip npm if you don't have a Node app in frontend/
+      - name: Build/Test (skip if no Node app)
+        run: |
+          if [ -f frontend/package.json ]; then
+            cd frontend
+            if [ -f package-lock.json ]; then npm ci; else npm install; fi
+            npm test --if-present
+            cd ..
+          else
+            echo "No package.json in frontend/, skipping npm build/test."
+          fi
 
-          - name: Build/Test (skip if no Node app)
-          run: |
-            if [ -f frontend/package.json ]; then
-              cd frontend
-              if [ -f package-lock.json ]; then npm ci; else npm install; fi
-              npm test --if-present
-              cd ..
-            else
-              echo "No package.json in frontend/, skipping npm build/test."
-            fi
-  
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
-           client-id: ${{ secrets.AZURE_CLIENT_ID }}
-           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-  
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
       - name: Resolve ACR login server
         env:
-          REGISTRY_NAME: ${{ secrets.AZURE_CONTAINER_REGISTRY }}
+          REGISTRY_NAME: ${{ secrets.AZURE_CONTAINER_REGISTRY }}   # e.g., sit722wk8acr (no .azurecr.io)
         run: |
           set -e
           LOGIN_SERVER=$(az acr show --name "$REGISTRY_NAME" --query loginServer -o tsv)
           echo "REGISTRY_NAME=$REGISTRY_NAME" >> $GITHUB_ENV
           echo "REGISTRY_LOGIN=$LOGIN_SERVER" >> $GITHUB_ENV
           echo "::notice::Resolved ACR login server: $LOGIN_SERVER"
-  
+
       - name: Login to ACR
         run: az acr login --name "$REGISTRY_NAME"
-  
+
       - name: Build & Push Frontend
-        env:
-          IMAGE_TAG: ${{ env.IMAGE_TAG }}
-          run: |
-            docker build -t "$REGISTRY_LOGIN/frontend:${IMAGE_TAG}" ./frontend/
-            docker tag  "$REGISTRY_LOGIN/frontend:${IMAGE_TAG}" "$REGISTRY_LOGIN/frontend:latest"
-            docker push "$REGISTRY_LOGIN/frontend:${IMAGE_TAG}"
-            docker push "$REGISTRY_LOGIN/frontend:latest"
+        run: |
+          docker build -t "$REGISTRY_LOGIN/frontend:${{ env.IMAGE_TAG }}" ./frontend/
+          docker tag  "$REGISTRY_LOGIN/frontend:${{ env.IMAGE_TAG }}" "$REGISTRY_LOGIN/frontend:latest"
+          docker push "$REGISTRY_LOGIN/frontend:${{ env.IMAGE_TAG }}"
+          docker push "$REGISTRY_LOGIN/frontend:latest"
